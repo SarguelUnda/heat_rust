@@ -172,10 +172,11 @@ unsafe fn explicit_difference_scheme<T: Scheme>(y0: &Vec<f64>, koeff: f64, a: f6
 }
 
 fn dump_result(y: &Vec<f64>) {
-    println!("No\t<==>\tcalculated");
+    io::stderr().write_fmt(format_args!("No\t<==>\tcalculated")).expect("Uncknown io error");
     for i in 0..y.len() {
-        io::stdout().write_fmt(format_args!("{}\t<==>\t{:>.5}\n", i, y[i])).expect("Uncknown io error");
+        io::stderr().write_fmt(format_args!("{}\t<==>\t{:>.5}\n", i, y[i])).expect("Uncknown io error");
     }
+    io::stdout().flush().expect("Uncknown io error");
 }
 
 fn main() {
