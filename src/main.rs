@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::io::Write;
 use std::{env, io};
 use std::{mem, time};
@@ -75,21 +76,21 @@ struct BoundaryCondition3rd {
 }
 
 trait BoundaryCondition {
-    fn calc(&self, h: f64, t_curr: f64, y0: f64, y1: f64) -> f64;
+    fn calc(&self, h: f64, t_curr: f64, y0: &f64, y1: &f64) -> f64;
 }
 
 impl BoundaryCondition for BoundaryCondition1rd {
-    fn calc(&self, _: f64, _: f64, _: f64, _: f64) -> f64 {
+    fn calc(&self, _: f64, _: f64, _: &f64, _: &f64) -> f64 {
         self.m_u
     }
 }
 impl BoundaryCondition for BoundaryCondition2rd {
-    fn calc(&self, h: f64, _: f64, y0: f64, y1: f64) -> f64 {
+    fn calc(&self, h: f64, _: f64, y0: &f64, y1: &f64) -> f64 {
         (2.0 * h * self.m_du + 4.0 * y0 - y1) / 3.0
     }
 }
 impl BoundaryCondition for BoundaryCondition3rd {
-    fn calc(&self, h: f64, _: f64, y0: f64, y1: f64) -> f64 {
+    fn calc(&self, h: f64, _: f64, y0: &f64, y1: &f64) -> f64 {
         let divider = 2.0 * h * self.m_ku / self.m_kdu - 3.0;
         if is_epsilon(divider, 3.0, 0.00001) {
             (self.m_c - (y0)) / (h * self.m_ku / self.m_kdu - 1.0) //O(h)
@@ -120,9 +121,21 @@ fn explicit_difference_scheme<T: Scheme>(
 
     let mut y_prev = y_init.clone();
 
+    struct TmpValue(f64, f64, bool);
+    impl TmpValue {
+        fn next(&mut self) -> &mut f64 {
+            self.2 ^= true;
+            match self {
+                TmpValue(a, _, true) => a,
+                TmpValue(_, b, false) => b,
+            }
+        }
+    }
+
+    let mut tmp = TmpValue(0.0, 0.0, false);
+
     for iter in 1..max_iter {
         let mut y = y_init.clone();
-        let mut y_tmp = y_init.clone();
 
         let tau = t / times as f64;
         print!("iter={iter}, h={h}, tau={tau}");
@@ -132,29 +145,45 @@ fn explicit_difference_scheme<T: Scheme>(
         let mut t_curr = 0.0;
 
         for _ in 1..times + 1 {
-            mem::swap(&mut y, &mut y_tmp);
-
             t_curr += tau;
             let mut x = a;
-            //inner nodes
 
+            //inner nodes
             for i in 1..(size - 1) {
                 x += h;
 
-                let (y1, y2, y3) = unsafe {
-                    (
-                        y_tmp.get_unchecked(i - 1),
-                        y_tmp.get_unchecked(i),
-                        y_tmp.get_unchecked(i + 1),
+                let new = tmp.next();
+
+                if i > 2 {
+                    unsafe {
+                        *y.get_unchecked_mut(i - 2) = *new;
+                    }
+                }
+
+                *new = unsafe {
+                    scheme.scheme(
+                        x,
+                        y.get_unchecked(i - 1),
+                        y.get_unchecked(i),
+                        y.get_unchecked(i + 1),
                     )
                 };
-
-                y[i] = scheme.scheme(x, y1, y2, y3);
             }
 
-            //boundary conditions
-            y[0] = bc_a.calc(h, t_curr, y[1], y[2]);
-            y[size - 1] = bc_b.calc(h, t_curr, y[size - 2], y[size - 3]);
+            unsafe {
+                *y.get_unchecked_mut(size - 3) = *tmp.next();
+                *y.get_unchecked_mut(size - 2) = *tmp.next();
+
+                //boundary conditions
+                *y.get_unchecked_mut(0) =
+                    bc_a.calc(h, t_curr, y.get_unchecked(1), y.get_unchecked(2));
+                *y.get_unchecked_mut(size - 1) = bc_b.calc(
+                    h,
+                    t_curr,
+                    y.get_unchecked(size - 2),
+                    y.get_unchecked(size - 3),
+                );
+            }
         }
 
         err = error(&y, &y_prev);
