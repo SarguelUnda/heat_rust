@@ -1,8 +1,6 @@
 use std::io::Write;
-use std::ops::BitXorAssign;
-use std::slice::SliceIndex;
-use std::time;
 use std::{env, io};
+use std::{mem, time};
 
 fn is_epsilon(val: f64, compare_val: f64, eps: f64) -> bool {
     if compare_val.abs() <= f64::EPSILON {
@@ -12,7 +10,7 @@ fn is_epsilon(val: f64, compare_val: f64, eps: f64) -> bool {
     return (val / compare_val).abs() < eps;
 }
 
-fn error(v1: &Vec<f64>, v2: &Vec<f64>) -> f64 {
+fn error(v1: &[f64], v2: &[f64]) -> f64 {
     assert_eq!(v1.len(), v2.len());
 
     let mut summ = 0.0;
@@ -102,7 +100,7 @@ impl BoundaryCondition for BoundaryCondition3rd {
 }
 
 fn explicit_difference_scheme<T: Scheme>(
-    y0: &Vec<f64>,
+    y_init: &Vec<f64>,
     koeff: f64,
     a: f64,
     b: f64,
@@ -113,31 +111,19 @@ fn explicit_difference_scheme<T: Scheme>(
     max_iter: u32,
 ) -> Vec<f64> {
     let now = time::Instant::now();
-    let size = y0.len();
+    let size = y_init.len();
     let h = (b - a) / (size - 1) as f64;
     let mut times = (2.0 * koeff * t / h / h + 0.5).round() as u32;
     let mut err: f64;
 
-    let mut y = vec![0.0; size];
-    struct TmpVal(f64, f64, bool);
+    assert!(size >= 3, "Need 3 points or more");
 
-    impl TmpVal {
-        fn next(&mut self) -> &mut f64 {
-            let TmpVal(v0, v1, flag) = self;
-            flag.bitxor_assign(true);
-            if *flag {
-                v0
-            } else {
-                v1
-            }
-        }
-    }
-
-    let mut tmp = TmpVal(0.0, 0.0, false);
+    let mut y_prev = y_init.clone();
 
     for iter in 1..max_iter {
-        let y_prev = y;
-        y = y0.clone();
+        let mut y = y_init.clone();
+        let mut y_tmp = y_init.clone();
+
         let tau = t / times as f64;
         print!("iter={iter}, h={h}, tau={tau}");
         io::stdout().flush().expect("Uncknown io error");
@@ -146,48 +132,34 @@ fn explicit_difference_scheme<T: Scheme>(
         let mut t_curr = 0.0;
 
         for _ in 1..times + 1 {
+            mem::swap(&mut y, &mut y_tmp);
+
             t_curr += tau;
             let mut x = a;
             //inner nodes
-            let mut curr_tmp = tmp.next();
-            if size > 2 {
+
+            for i in 1..(size - 1) {
                 x += h;
-                let (y0, y1, y2) =
-                    unsafe { (y.get_unchecked(0), y.get_unchecked(1), y.get_unchecked(2)) };
-                *curr_tmp = scheme.scheme(x, y0, y1, y2);
-                if size > 3 {
-                    x += h;
-                    curr_tmp = tmp.next();
-                    let (y0, y1, y2) =
-                        unsafe { (y.get_unchecked(1), y.get_unchecked(2), y.get_unchecked(3)) };
-                    *curr_tmp = scheme.scheme(x, y0, y1, y2);
-                }
-            }
-            for i in 3..size - 1 {
-                x += h;
-                curr_tmp = tmp.next();
-                y[i - 2] = *curr_tmp;
-                let (y0, y1, y2) = unsafe {
+
+                let (y1, y2, y3) = unsafe {
                     (
-                        y.get_unchecked(i - 1),
-                        y.get_unchecked(i),
-                        y.get_unchecked(i + 1),
+                        y_tmp.get_unchecked(i - 1),
+                        y_tmp.get_unchecked(i),
+                        y_tmp.get_unchecked(i + 1),
                     )
                 };
-                *curr_tmp = scheme.scheme(x, y0, y1, y2);
+
+                y[i] = scheme.scheme(x, y1, y2, y3);
             }
-            if size > 2 {
-                y[size - 2] = *curr_tmp;
-                if size > 3 {
-                    y[size - 3] = *tmp.next();
-                }
-            }
+
             //boundary conditions
             y[0] = bc_a.calc(h, t_curr, y[1], y[2]);
             y[size - 1] = bc_b.calc(h, t_curr, y[size - 2], y[size - 3]);
         }
 
         err = error(&y, &y_prev);
+        y_prev = mem::take(&mut y);
+
         println!(", N = {times}, err = {err:>.5e}\n");
 
         if err < eps {
@@ -198,7 +170,7 @@ fn explicit_difference_scheme<T: Scheme>(
     let elapsed_time = now.elapsed();
     println!("Elapsed: {} ms\n", elapsed_time.as_millis());
 
-    return y;
+    return y_prev;
 }
 
 fn dump_result(y: &Vec<f64>) {
