@@ -131,25 +131,28 @@ fn explicit_difference_scheme<T: Scheme>(
         let scheme = T::new(koeff, tau, h);
         let mut t_curr = 0.0;
 
+        let xs: Vec<_> = (0..size - 1).map(|n| a + n as f64 * h).collect();
+
         for _ in 1..times + 1 {
             mem::swap(&mut y, &mut y_tmp);
 
             t_curr += tau;
-            let mut x = a;
+            // let mut x = a;
             //inner nodes
 
             for i in 1..(size - 1) {
-                x += h;
+                // x += h;
 
-                let (y1, y2, y3) = unsafe {
+                let (x, y1, y2, y3) = unsafe {
                     (
+                        xs.get_unchecked(i),
                         y_tmp.get_unchecked(i - 1),
                         y_tmp.get_unchecked(i),
                         y_tmp.get_unchecked(i + 1),
                     )
                 };
 
-                y[i] = scheme.scheme(x, y1, y2, y3);
+                y[i] = scheme.scheme(*x, y1, y2, y3);
             }
 
             //boundary conditions
